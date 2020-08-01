@@ -3,13 +3,13 @@ import subprocess
 from pathlib import Path
 
 import luigi
-from luigi.util import inherits
+from luigi.util import inherits, requires
 from luigi.contrib.sqla import SQLAlchemyTarget
 
 import pipeline.models.db_manager
 from ..tools import tools
 from .targets import TargetList
-from .helpers import get_tool_state
+from .helpers import get_tool_state, is_inscope
 from ..models.target_model import Target
 
 
@@ -126,39 +126,24 @@ class AmassScan(luigi.Task):
         amass_input_file.unlink()
 
 
-@inherits(AmassScan)
+@requires(AmassScan)
 class ParseAmassOutput(luigi.Task):
     """ Read amass JSON results and create categorized entries into ip|subdomain files.
 
     Args:
         db_location: specifies the path to the database used for storing results *Required by upstream Task*
         target_file: specifies the file on disk containing a list of ips or domains *Required by upstream Task*
+        scope_file: specifies the scope in JSON files taken by BurpSuite
         exempt_list: Path to a file providing blacklisted subdomains, one per line. *Optional by upstream Task*
         results_dir: specifes the directory on disk to which all Task results are written *Required by upstream Task*
     """
+
+    scope_file = luigi.Parameter(default="")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db_mgr = pipeline.models.db_manager.DBManager(db_location=self.db_location)
         self.results_subfolder = (Path(self.results_dir) / "amass-results").expanduser().resolve()
-
-    def requires(self):
-        """ ParseAmassOutput depends on AmassScan to run.
-
-        TargetList expects target_file as a parameter.
-        AmassScan accepts exempt_list as an optional parameter.
-
-        Returns:
-            luigi.ExternalTask - TargetList
-        """
-
-        args = {
-            "target_file": self.target_file,
-            "exempt_list": self.exempt_list,
-            "results_dir": self.results_dir,
-            "db_location": self.db_location,
-        }
-        return AmassScan(**args)
 
     def output(self):
         """ Returns the target output files for this task.
@@ -202,14 +187,16 @@ class ParseAmassOutput(luigi.Task):
             for line in amass_json_file:
                 entry = json.loads(line)
 
-                tgt = self.db_mgr.get_or_create(Target, hostname=entry.get("name"), is_web=True)
+                # test domain and enter into database only if within scope
+                if is_inscope(entry.get("name"), self.scope_file):
+                    tgt = self.db_mgr.get_or_create(Target, hostname=entry.get("name"), is_web=True)
 
-                for address in entry.get("addresses"):
-                    ipaddr = address.get("ip")
+                    for address in entry.get("addresses"):
+                        ipaddr = address.get("ip")
 
-                    tgt = self.db_mgr.add_ipv4_or_v6_address_to_target(tgt, ipaddr)
+                        tgt = self.db_mgr.add_ipv4_or_v6_address_to_target(tgt, ipaddr)
 
-                self.db_mgr.add(tgt)
-                self.output().touch()
+                    self.db_mgr.add(tgt)
+                    self.output().touch()
 
             self.db_mgr.close()

@@ -5,6 +5,8 @@ import inspect
 import pkgutil
 import importlib
 import ipaddress
+import json
+import re
 from pathlib import Path
 from collections import defaultdict
 
@@ -87,3 +89,39 @@ def get_ip_address_version(ipaddr):
             return "4"
         elif isinstance(ipaddress.ip_address(ipaddr), ipaddress.IPv6Address):  # ipv6
             return "6"
+
+
+def is_inscope(hostname, scope_file):
+    """ Check given hostname against scope file and return True if it is """
+    # Use an default-allow rule,
+    # so if there is no match in "include" or "exclude", it is within scope
+    in_scope = True
+
+    if scope_file == "":
+        return in_scope
+
+    # Load Scope file
+    with open(scope_file, "r") as f:
+        scope = json.load(f)
+
+    # parse json data
+    for block in scope['target']['scope']['exclude']:
+        # Does URL match an excluded hostname?
+        if re.search(block['host'], hostname):
+            # If so, check for a more specific allow entry
+            for allow in scope['target']['scope']['include']:
+                # remove special chars in allow entry to make a domain name
+                allow_n = allow['host'].replace('\\', '').replace('^', '').replace('$', '')
+                # test the block entry against the normalized domain name
+                if re.search(block['host'], allow_n):
+                    # if the allowed domain name fits in the block domain entry
+                    # , then it must be more specific.
+                    # Test URL against the allow entry
+                    if re.search(allow['host'], hostname):
+                        # If it matches, mark as true
+                        in_scope = True
+                    else:
+                        in_scope = False
+                else:
+                    in_scope = False
+    return in_scope
