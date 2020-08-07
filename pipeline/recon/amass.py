@@ -9,11 +9,7 @@ from luigi.contrib.sqla import SQLAlchemyTarget
 import pipeline.models.db_manager
 from ..tools import tools
 from .targets import TargetList
-<<<<<<< HEAD
-from .helpers import get_tool_state, is_inscope
-=======
-from .helpers import meets_requirements
->>>>>>> d7dbd1e7b3d50b5c320e69f2b3cc233d51113baa
+from .helpers import meets_requirements, is_inscope
 from ..models.target_model import Target
 
 
